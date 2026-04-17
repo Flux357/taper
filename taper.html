@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FluxClick">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1162/1162456.png">
+
+    <title>Flux Hacker Clicker</title>
+    
+    <style>
+        :root {
+            --neon: #00ff41;
+            --bg: #0a0a0a;
+            --panel: #1a1a1a;
+        }
+
+        /* Убираем лишние эффекты Safari */
+        * {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            user-select: none;
+            touch-action: manipulation;
+        }
+
+        body {
+            margin: 0; padding: 0;
+            background: var(--bg);
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Статистика сверху */
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .balance {
+            font-size: 36px;
+            font-weight: bold;
+            text-shadow: 0 0 15px var(--neon);
+            margin-bottom: 5px;
+        }
+
+        .income {
+            font-size: 14px;
+            color: var(--neon);
+            opacity: 0.8;
+        }
+
+        /* Главная кнопка-монетка */
+        .coin-wrap {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            will-change: transform;
+        }
+
+        .coin-wrap:active {
+            transform: scale(0.9); /* Эффект сжатия */
+        }
+
+        .coin {
+            width: 220px;
+            height: 220px;
+            border: 4px solid var(--neon);
+            border-radius: 50%;
+            background: rgba(0, 255, 65, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 90px;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
+            transition: box-shadow 0.1s, background 0.1s;
+        }
+
+        .coin-wrap:active .coin {
+            box-shadow: 0 0 50px rgba(0, 255, 65, 0.5);
+            background: rgba(0, 255, 65, 0.2);
+        }
+
+        /* Вылетающие цифры */
+        .plus-one {
+            position: absolute;
+            color: var(--neon);
+            font-weight: bold;
+            font-size: 28px;
+            pointer-events: none;
+            z-index: 100;
+            animation: flyUp 0.6s ease-out forwards;
+        }
+
+        @keyframes flyUp {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(-120px) scale(1.5); opacity: 0; }
+        }
+
+        /* Магазин апгрейдов */
+        .shop {
+            margin-top: 50px;
+            width: 80%;
+            max-width: 300px;
+        }
+
+        .upgrade-btn {
+            width: 100%;
+            background: var(--panel);
+            border: 1px solid var(--neon);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: 0.2s;
+        }
+
+        .upgrade-btn:active {
+            background: var(--neon);
+            color: black;
+        }
+
+        .upgrade-btn:disabled {
+            opacity: 0.3;
+            border-color: #444;
+            filter: grayscale(1);
+        }
+
+        .price {
+            font-weight: bold;
+            color: var(--neon);
+        }
+        
+        .upgrade-btn:active .price {
+            color: black;
+        }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <div class="header">
+        <div class="balance" id="balance">0 $</div>
+        <div class="income">За клик: +<span id="perClick">1</span></div>
+    </div>
+
+    <div class="coin-wrap" id="mainBtn">
+        <div class="coin">⚡</div>
+    </div>
+
+    <div class="shop">
+        <button class="upgrade-btn" id="buyBtn" onclick="buyUpgrade()">
+            <span>УЛУЧШИТЬ КЛИК</span>
+            <span class="price" id="costText">50 $</span>
+        </button>
+    </div>
+
+    <script>
+        let balance = 0;
+        let perClick = 1;
+        let cost = 50;
+
+        const mainBtn = document.getElementById('mainBtn');
+        const balanceEl = document.getElementById('balance');
+        const perClickEl = document.getElementById('perClick');
+        const costTextEl = document.getElementById('costText');
+        const buyBtn = document.getElementById('buyBtn');
+
+        // Функция клика
+        function doClick(e) {
+            balance += perClick;
+            
+            // Вибрация для iPhone
+            if (navigator.vibrate) {
+                navigator.vibrate(15);
+            }
+
+            // Эффект вылетающей цифры
+            const x = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+            const y = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+            
+            createPlus(x, y);
+            updateUI();
+        }
+
+        // Слушатели событий
+        mainBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            doClick(e);
+        });
+
+        mainBtn.addEventListener('mousedown', (e) => {
+            if ('ontouchstart' in window) return; // Чтобы не дублировать на мобилах
+            doClick(e);
+        });
+
+        function createPlus(x, y) {
+            const p = document.createElement('div');
+            p.className = 'plus-one';
+            p.innerText = '+' + perClick;
+            p.style.left = (x - 20) + 'px';
+            p.style.top = (y - 40) + 'px';
+            document.body.appendChild(p);
+            setTimeout(() => p.remove(), 600);
+        }
+
+        function buyUpgrade() {
+            if (balance >= cost) {
+                balance -= cost;
+                perClick += 1;
+                cost = Math.round(cost * 1.6);
+                updateUI();
+                
+                // Вибрация при покупке
+                if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+            }
+        }
+
+        function updateUI() {
+            balanceEl.innerText = balance + ' $';
+            perClickEl.innerText = perClick;
+            costTextEl.innerText = cost + ' $';
+            
+            // Проверка доступности кнопки
+            buyBtn.disabled = balance < cost;
+        }
+
+        // Начальное обновление
+        updateUI();
+    </script>
+</body>
+</html>
