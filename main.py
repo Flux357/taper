@@ -232,7 +232,7 @@ def get_total_revenue():
     cur.execute("SELECT price FROM purchases")
     prices = cur.fetchall()
     conn.close()
-
+    
     total = 0
     for price in prices:
         price_str = price[0]
@@ -251,7 +251,7 @@ def get_revenue_today():
     """)
     prices = cur.fetchall()
     conn.close()
-
+    
     total = 0
     for price in prices:
         price_str = price[0]
@@ -322,10 +322,10 @@ def main_menu_keyboard(user_id):
     markup.add(
         types.InlineKeyboardButton("❓ Помощь", callback_data="menu_help")
     )
-
+    
     if user_id in get_admins():
         markup.add(types.InlineKeyboardButton("🔧 Админ-панель", callback_data="menu_admin"))
-
+    
     return markup
 
 
@@ -401,19 +401,10 @@ def products_list_for_edit_keyboard():
     products = get_products()
     for product in products:
         markup.add(types.InlineKeyboardButton(
-            f"📦 {product[1]} (ID: {product[0]})",
+            f"📦 {product[1]} (ID: {product[0]})", 
             callback_data=f"edit_select_{product[0]}"
         ))
     markup.add(types.InlineKeyboardButton("🔙 Назад в админку", callback_data="back_to_admin"))
-    return markup
-
-
-def confirm_cancel_keyboard():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ Продолжить", callback_data="continue_action"),
-        types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_action")
-    )
     return markup
 
 
@@ -424,7 +415,7 @@ def cmd_start(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     last_name = message.from_user.last_name
-
+    
     add_user(user_id, username, first_name, last_name)
 
     bot.send_message(
@@ -444,6 +435,19 @@ def cmd_admin(message):
     bot.send_message(message.chat.id, "🔧 Админ-панель", reply_markup=admin_keyboard())
 
 
+@bot.message_handler(commands=['cancel'])
+def cancel_action(message):
+    user_id = message.from_user.id
+    if user_id in admin_states:
+        del admin_states[user_id]
+        bot.send_message(message.chat.id, "❌ Действие отменено!", reply_markup=admin_keyboard())
+    elif user_id in pending_payments:
+        del pending_payments[user_id]
+        bot.send_message(message.chat.id, "❌ Оплата отменена!", reply_markup=main_menu_keyboard(user_id))
+    else:
+        bot.send_message(message.chat.id, "❌ Нет активных действий для отмены.")
+
+
 # ========== ИНЛАЙН ОБРАБОТЧИКИ ==========
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
 def back_to_menu(call):
@@ -460,7 +464,7 @@ def back_to_menu(call):
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_admin")
 def back_to_admin(call):
     bot.edit_message_text("🔧 Админ-панель", call.message.chat.id, call.message.message_id,
-                          reply_markup=admin_keyboard())
+                         reply_markup=admin_keyboard())
     bot.answer_callback_query(call.id)
 
 
@@ -514,7 +518,7 @@ def menu_admin(call):
     if user_id not in get_admins():
         bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
         return
-
+    
     bot.edit_message_text("🔧 Админ-панель", call.message.chat.id, call.message.message_id)
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=admin_keyboard())
     bot.answer_callback_query(call.id)
@@ -576,7 +580,7 @@ def payment_start(call):
         call.message.chat.id,
         "📸 Пожалуйста, отправьте *чек об оплате* (фото).\n\n"
         "После получения чека администратор проверит оплату и свяжется с вами.\n\n"
-        "Если передумали, просто отправьте /start",
+        "Если передумали, отправьте /cancel",
         parse_mode="Markdown"
     )
     bot.answer_callback_query(call.id, "Ожидаем ваш чек")
@@ -586,6 +590,8 @@ def payment_start(call):
 @bot.message_handler(content_types=['photo'])
 def handle_receipt(message):
     user_id = message.from_user.id
+    
+    print(f"📸 Получено фото от пользователя {user_id}")  # Отладка
 
     if user_id not in pending_payments:
         bot.send_message(message.chat.id, "❓ Вы не начинали оплату. Сначала выберите товар и нажмите «Я оплатил».")
@@ -595,28 +601,49 @@ def handle_receipt(message):
     product_id = payment_info['product_id']
     product_name = payment_info['product_name']
     price = payment_info['price']
-
+    
+    # Сохраняем покупку
     add_purchase(user_id, product_id, product_name, price)
-
+    
+    # Получаем список админов
     admins = get_admins()
     file_id = message.photo[-1].file_id
+    
+    # Формируем информацию о пользователе
     user_mention = f"@{message.from_user.username}" if message.from_user.username else f"id{user_id}"
-
+    user_fullname = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
+    
+    # Отправляем уведомление пользователю
+    bot.send_message(
+        message.chat.id,
+        f"✅ *Спасибо за оплату!*\n\n"
+        f"📦 Товар: {product_name}\n"
+        f"💰 Сумма: {price}\n\n"
+        f"Ваш чек отправлен администратору. Ожидайте подтверждения в ближайшее время.\n\n"
+        f"По вопросам: @instalvl",
+        parse_mode="Markdown",
+        reply_markup=main_menu_keyboard(user_id)
+    )
+    
+    # Отправляем уведомление всем админам
     for admin_id in admins:
         try:
             caption = (
-                f"🟢 *Новая оплата!*\n\n"
+                f"🟢 *НОВАЯ ОПЛАТА!*\n\n"
                 f"👤 Покупатель: {user_mention}\n"
+                f"👤 Имя: {user_fullname}\n"
                 f"📦 Товар: {product_name}\n"
                 f"💰 Сумма: {price}\n"
                 f"🆔 ID: {user_id}\n"
-                f"📎 Чек:"
+                f"📅 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"📎 *Чек ниже:*"
             )
             bot.send_photo(admin_id, file_id, caption=caption, parse_mode="Markdown")
+            print(f"✅ Уведомление отправлено админу {admin_id}")  # Отладка
         except Exception as e:
-            print(f"Не удалось отправить админу {admin_id}: {e}")
-
-    bot.send_message(message.chat.id, "✅ Спасибо! Ваш чек отправлен администратору. Ожидайте подтверждения.")
+            print(f"❌ Не удалось отправить админу {admin_id}: {e}")
+    
+    print(f"✅ Оплата от {user_id} обработана успешно")  # Отладка
 
 
 # ========== СТАТИСТИКА ==========
@@ -626,9 +653,9 @@ def show_stats_menu(call):
     if user_id not in get_admins():
         bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
         return
-
-    bot.edit_message_text("📊 *Выберите тип статистики:*", call.message.chat.id,
-                          call.message.message_id, parse_mode="Markdown")
+    
+    bot.edit_message_text("📊 *Выберите тип статистики:*", call.message.chat.id, 
+                         call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
 
@@ -637,13 +664,13 @@ def show_stats_menu(call):
 def stats_users(call):
     total_users = get_total_users()
     users_today = get_users_registered_today()
-
+    
     text = (
         "👥 *Статистика пользователей*\n\n"
         f"📊 Всего пользователей: *{total_users}*\n"
         f"🆕 Зарегистрировалось сегодня: *{users_today}*\n"
     )
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
@@ -653,13 +680,13 @@ def stats_users(call):
 def stats_revenue(call):
     total_revenue = get_total_revenue()
     revenue_today = get_revenue_today()
-
+    
     text = (
         "💰 *Статистика выручки*\n\n"
         f"📈 Общая выручка: *{total_revenue:,.0f}₽*\n"
         f"📆 Выручка за сегодня: *{revenue_today:,.0f}₽*\n"
     )
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
@@ -669,13 +696,13 @@ def stats_revenue(call):
 def stats_sales(call):
     total_purchases = get_total_purchases()
     purchases_today = get_purchases_today()
-
+    
     text = (
         "📦 *Статистика продаж*\n\n"
         f"📊 Всего продаж: *{total_purchases}*\n"
         f"🆕 Продаж сегодня: *{purchases_today}*\n"
     )
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
@@ -684,14 +711,14 @@ def stats_sales(call):
 @bot.callback_query_handler(func=lambda call: call.data == "stats_popular")
 def stats_popular(call):
     popular = get_popular_products()
-
+    
     if not popular:
         text = "⭐ *Популярные товары*\n\nПока нет продаж."
     else:
         text = "⭐ *Топ-5 популярных товаров*\n\n"
         for i, (name, count) in enumerate(popular, 1):
             text += f"{i}. {name} - *{count}* продаж\n"
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
@@ -706,7 +733,7 @@ def stats_full(call):
     total_purchases = get_total_purchases()
     purchases_today = get_purchases_today()
     popular = get_popular_products()
-
+    
     text = (
         "📊 *ПОЛНЫЙ ОТЧЁТ*\n\n"
         "👥 *Пользователи*\n"
@@ -720,13 +747,13 @@ def stats_full(call):
         f"└ За сегодня: {purchases_today}\n\n"
         "⭐ *Популярные товары*\n"
     )
-
+    
     if popular:
         for i, (name, count) in enumerate(popular, 1):
             text += f"{i}. {name} - {count} шт.\n"
     else:
         text += "Пока нет продаж"
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=stats_keyboard())
     bot.answer_callback_query(call.id)
@@ -738,9 +765,9 @@ def show_recent_purchases(call):
     if user_id not in get_admins():
         bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
         return
-
+    
     purchases = get_recent_purchases(10)
-
+    
     if not purchases:
         text = "📋 *Последние покупки*\n\nПока нет покупок."
     else:
@@ -749,9 +776,9 @@ def show_recent_purchases(call):
             user_id, product_name, price, date = purchase
             date_str = date[:16] if date else "неизвестно"
             text += f"👤 ID: {user_id}\n📦 {product_name} - {price}\n📅 {date_str}\n\n"
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, 
                                   reply_markup=types.InlineKeyboardMarkup().add(
                                       types.InlineKeyboardButton("🔙 Назад в админку", callback_data="back_to_admin")
                                   ))
@@ -765,22 +792,21 @@ def edit_product_choice(call):
     if user_id not in get_admins():
         bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
         return
-
+    
     products = get_products()
     if not products:
-        bot.edit_message_text("📭 *Нет товаров для редактирования*\n\nДобавьте товары через 'Добавить товар'",
-                              call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("📭 *Нет товаров для редактирования*\n\nДобавьте товары через 'Добавить товар'", 
+                             call.message.chat.id, call.message.message_id, parse_mode="Markdown")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
-                                      reply_markup=types.InlineKeyboardMarkup().add(
-                                          types.InlineKeyboardButton("🔙 Назад в админку", callback_data="back_to_admin")
-                                      ))
+                                     reply_markup=types.InlineKeyboardMarkup().add(
+                                         types.InlineKeyboardButton("🔙 Назад в админку", callback_data="back_to_admin")
+                                     ))
         bot.answer_callback_query(call.id)
         return
-
+    
     text = "✏️ *Выберите товар для редактирования:*"
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
-                                  reply_markup=products_list_for_edit_keyboard())
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=products_list_for_edit_keyboard())
     bot.answer_callback_query(call.id)
 
 
@@ -788,20 +814,20 @@ def edit_product_choice(call):
 def edit_select_product(call):
     product_id = int(call.data.split("_")[2])
     product = get_product_by_id(product_id)
-
+    
     if not product:
         bot.answer_callback_query(call.id, "Товар не найден")
         return
-
+    
     text = f"✏️ *Редактирование товара*\n\n"
     text += f"📦 ID: {product[0]}\n"
     text += f"📝 Название: `{product[1]}`\n"
     text += f"📄 Описание: `{product[2]}`\n"
     text += f"💰 Цена: `{product[3]}`\n\n"
     text += "Что хотите изменить?"
-
+    
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, 
                                   reply_markup=edit_product_choice_keyboard(product_id))
     bot.answer_callback_query(call.id)
 
@@ -812,12 +838,11 @@ def edit_product_name(call):
     admin_states[call.from_user.id] = {
         'action': 'edit_product',
         'product_id': product_id,
-        'field': 'name',
-        'previous_menu': call.message.message_id
+        'field': 'name'
     }
-    bot.send_message(call.message.chat.id,
-                     "📝 Введите *новое название* товара:\n\nЧтобы отменить, отправьте /cancel",
-                     parse_mode="Markdown")
+    bot.send_message(call.message.chat.id, 
+                    "📝 Введите *новое название* товара:\n\nЧтобы отменить, отправьте /cancel",
+                    parse_mode="Markdown")
     bot.answer_callback_query(call.id)
 
 
@@ -827,12 +852,11 @@ def edit_product_desc(call):
     admin_states[call.from_user.id] = {
         'action': 'edit_product',
         'product_id': product_id,
-        'field': 'description',
-        'previous_menu': call.message.message_id
+        'field': 'description'
     }
-    bot.send_message(call.message.chat.id,
-                     "📄 Введите *новое описание* товара:\n\nЧтобы отменить, отправьте /cancel",
-                     parse_mode="Markdown")
+    bot.send_message(call.message.chat.id, 
+                    "📄 Введите *новое описание* товара:\n\nЧтобы отменить, отправьте /cancel",
+                    parse_mode="Markdown")
     bot.answer_callback_query(call.id)
 
 
@@ -842,28 +866,16 @@ def edit_product_price(call):
     admin_states[call.from_user.id] = {
         'action': 'edit_product',
         'product_id': product_id,
-        'field': 'price',
-        'previous_menu': call.message.message_id
+        'field': 'price'
     }
-    bot.send_message(call.message.chat.id,
-                     "💰 Введите *новую цену* товара (например: 1500₽):\n\nЧтобы отменить, отправьте /cancel",
-                     parse_mode="Markdown")
+    bot.send_message(call.message.chat.id, 
+                    "💰 Введите *новую цену* товара (например: 1500₽):\n\nЧтобы отменить, отправьте /cancel",
+                    parse_mode="Markdown")
     bot.answer_callback_query(call.id)
 
 
-@bot.message_handler(commands=['cancel'])
-def cancel_action(message):
-    user_id = message.from_user.id
-    if user_id in admin_states:
-        del admin_states[user_id]
-        bot.send_message(message.chat.id, "❌ Действие отменено!", reply_markup=admin_keyboard())
-    else:
-        bot.send_message(message.chat.id, "❌ Нет активных действий для отмены.")
-
-
 # ========== АДМИН ОБРАБОТЧИКИ ==========
-@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_") and not call.data.startswith(
-    "admin_stats") and not call.data.startswith("admin_recent") and call.data not in ["admin_edit_product"])
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_") and not call.data.startswith("admin_stats") and not call.data.startswith("admin_recent") and call.data not in ["admin_edit_product"])
 def admin_callback(call):
     user_id = call.from_user.id
     if user_id not in get_admins():
@@ -873,8 +885,7 @@ def admin_callback(call):
     action = call.data.replace("admin_", "")
 
     if action == "add_product":
-        bot.send_message(call.message.chat.id, "Введите *название товара*:\n\nЧтобы отменить, отправьте /cancel",
-                         parse_mode="Markdown")
+        bot.send_message(call.message.chat.id, "Введите *название товара*:\n\nЧтобы отменить, отправьте /cancel", parse_mode="Markdown")
         admin_states[user_id] = {'action': 'add_product', 'step': 1}
         bot.answer_callback_query(call.id)
 
@@ -892,8 +903,7 @@ def admin_callback(call):
         bot.answer_callback_query(call.id)
 
     elif action == "add_admin":
-        bot.send_message(call.message.chat.id,
-                         "Введите Telegram ID пользователя, которого хотите сделать админом:\n\nЧтобы отменить, отправьте /cancel")
+        bot.send_message(call.message.chat.id, "Введите Telegram ID пользователя, которого хотите сделать админом:\n\nЧтобы отменить, отправьте /cancel")
         admin_states[user_id] = {'action': 'add_admin', 'step': 1}
         bot.answer_callback_query(call.id)
 
@@ -928,38 +938,34 @@ def handle_admin_input(message):
     state = admin_states[user_id]
     action = state['action']
 
-    # Обработка изменения товара
     if action == 'edit_product':
         product_id = state['product_id']
         field = state['field']
         new_value = message.text
-
+        
         update_product(product_id, field, new_value)
-
+        
         field_names = {
             'name': 'Название',
             'description': 'Описание',
             'price': 'Цену'
         }
-
-        bot.send_message(message.chat.id,
-                         f"✅ {field_names[field]} товара успешно изменено!\n\nНовое значение: {new_value}",
-                         reply_markup=admin_keyboard())
+        
+        bot.send_message(message.chat.id, 
+                        f"✅ {field_names[field]} товара успешно изменено!\n\nНовое значение: {new_value}",
+                        reply_markup=admin_keyboard())
         del admin_states[user_id]
         return
 
-    # Остальные действия
     if action == 'add_product':
         if state['step'] == 1:
             admin_states[user_id]['name'] = message.text
             admin_states[user_id]['step'] = 2
-            bot.send_message(message.chat.id, "Введите *описание товара*:\n\nЧтобы отменить, отправьте /cancel",
-                             parse_mode="Markdown")
+            bot.send_message(message.chat.id, "Введите *описание товара*:\n\nЧтобы отменить, отправьте /cancel", parse_mode="Markdown")
         elif state['step'] == 2:
             admin_states[user_id]['desc'] = message.text
             admin_states[user_id]['step'] = 3
-            bot.send_message(message.chat.id, "Введите *цену* (например: 1500₽):\n\nЧтобы отменить, отправьте /cancel",
-                             parse_mode="Markdown")
+            bot.send_message(message.chat.id, "Введите *цену* (например: 1500₽):\n\nЧтобы отменить, отправьте /cancel", parse_mode="Markdown")
         elif state['step'] == 3:
             name = admin_states[user_id]['name']
             desc = admin_states[user_id]['desc']
@@ -990,8 +996,7 @@ def handle_admin_input(message):
         try:
             remove_id = int(message.text)
             if remove_id == 8093996396:
-                bot.send_message(message.chat.id, "❌ Нельзя удалить главного администратора!",
-                                 reply_markup=admin_keyboard())
+                bot.send_message(message.chat.id, "❌ Нельзя удалить главного администратора!", reply_markup=admin_keyboard())
             else:
                 if remove_admin(remove_id):
                     bot.send_message(message.chat.id, f"✅ Админ {remove_id} удалён!", reply_markup=admin_keyboard())
@@ -1030,7 +1035,7 @@ def handle_admin_input(message):
 if __name__ == "__main__":
     init_db()
     print("=" * 50)
-    print("Бот DevBot успешно запущен!")
+    print("🤖 Бот DevBot успешно запущен!")
     print("=" * 50)
     print("\n📌 Доступные команды:")
     print("  /start - Главное меню")
@@ -1046,5 +1051,8 @@ if __name__ == "__main__":
     print("  📢 Рассылка")
     print("  📊 Статистика")
     print("  📋 Последние покупки")
+    print("\n📸 При оплате:")
+    print("  - Пользователь получает подтверждение")
+    print("  - Администратор получает фото чека")
     print("\n" + "=" * 50)
     bot.infinity_polling()
