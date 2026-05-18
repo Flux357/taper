@@ -2,7 +2,7 @@ import telebot
 from telebot import types
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ========== КОНФИГУРАЦИЯ ==========
 BOT_TOKEN = "8601248930:AAHU7-mIvmn8SrzZ9qWgMsTYgxyfoMQQt4Q"
@@ -59,10 +59,12 @@ def init_db():
         )
     ''')
 
+    # Добавляем главного админа
     cur.execute("SELECT * FROM admins WHERE user_id=?", (8093996396,))
     if not cur.fetchone():
         cur.execute("INSERT INTO admins (user_id) VALUES (?)", (8093996396,))
 
+    # Добавляем реквизиты по умолчанию
     cur.execute("SELECT * FROM config WHERE key='requisites'")
     if not cur.fetchone():
         cur.execute("INSERT INTO config (key, value) VALUES (?, ?)",
@@ -591,10 +593,16 @@ def payment_start(call):
 def handle_receipt(message):
     user_id = message.from_user.id
     
-    print(f"📸 Получено фото от пользователя {user_id}")  # Отладка
-
+    print(f"📸 Получено фото от пользователя ID: {user_id}")
+    print(f"   Username: @{message.from_user.username}")
+    print(f"   Имя: {message.from_user.first_name}")
+    
+    # Проверяем, ожидает ли пользователь оплату
     if user_id not in pending_payments:
-        bot.send_message(message.chat.id, "❓ Вы не начинали оплату. Сначала выберите товар и нажмите «Я оплатил».")
+        bot.send_message(
+            message.chat.id, 
+            "❓ Вы не начинали оплату. Сначала выберите товар и нажмите «Я оплатил»."
+        )
         return
 
     payment_info = pending_payments.pop(user_id)
@@ -602,30 +610,37 @@ def handle_receipt(message):
     product_name = payment_info['product_name']
     price = payment_info['price']
     
-    # Сохраняем покупку
+    # Сохраняем покупку в базу
     add_purchase(user_id, product_id, product_name, price)
+    print(f"✅ Покупка сохранена: {product_name} - {price}")
     
     # Получаем список админов
     admins = get_admins()
+    print(f"👥 Список админов для уведомления: {admins}")
+    
+    # Получаем фото
     file_id = message.photo[-1].file_id
     
     # Формируем информацию о пользователе
     user_mention = f"@{message.from_user.username}" if message.from_user.username else f"id{user_id}"
     user_fullname = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip()
     
-    # Отправляем уведомление пользователю
-    bot.send_message(
-        message.chat.id,
-        f"✅ *Спасибо за оплату!*\n\n"
-        f"📦 Товар: {product_name}\n"
-        f"💰 Сумма: {price}\n\n"
-        f"Ваш чек отправлен администратору. Ожидайте подтверждения в ближайшее время.\n\n"
-        f"По вопросам: @instalvl",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard(user_id)
-    )
+    # 1. Отправляем подтверждение САМОМУ ПОЛЬЗОВАТЕЛЮ
+    try:
+        bot.send_message(
+            message.chat.id,
+            f"✅ *Спасибо за оплату!*\n\n"
+            f"📦 Товар: {product_name}\n"
+            f"💰 Сумма: {price}\n\n"
+            f"Ваш чек отправлен администратору. Ожидайте подтверждения в ближайшее время.\n\n"
+            f"По вопросам: @instalvl",
+            parse_mode="Markdown"
+        )
+        print(f"✅ Подтверждение отправлено пользователю {user_id}")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке подтверждения пользователю: {e}")
     
-    # Отправляем уведомление всем админам
+    # 2. Отправляем уведомление ВСЕМ АДМИНАМ с фото чека
     for admin_id in admins:
         try:
             caption = (
@@ -634,16 +649,17 @@ def handle_receipt(message):
                 f"👤 Имя: {user_fullname}\n"
                 f"📦 Товар: {product_name}\n"
                 f"💰 Сумма: {price}\n"
-                f"🆔 ID: {user_id}\n"
+                f"🆔 ID пользователя: {user_id}\n"
                 f"📅 Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 f"📎 *Чек ниже:*"
             )
             bot.send_photo(admin_id, file_id, caption=caption, parse_mode="Markdown")
-            print(f"✅ Уведомление отправлено админу {admin_id}")  # Отладка
+            print(f"✅ Уведомление отправлено админу {admin_id}")
         except Exception as e:
-            print(f"❌ Не удалось отправить админу {admin_id}: {e}")
+            print(f"❌ Ошибка при отправке админу {admin_id}: {e}")
     
-    print(f"✅ Оплата от {user_id} обработана успешно")  # Отладка
+    print(f"🎉 Оплата от пользователя {user_id} успешно обработана!")
+    print("=" * 50)
 
 
 # ========== СТАТИСТИКА ==========
@@ -1034,14 +1050,14 @@ def handle_admin_input(message):
 # ========== ЗАПУСК БОТА ==========
 if __name__ == "__main__":
     init_db()
-    print("=" * 50)
+    print("=" * 60)
     print("🤖 Бот DevBot успешно запущен!")
-    print("=" * 50)
+    print("=" * 60)
     print("\n📌 Доступные команды:")
     print("  /start - Главное меню")
     print("  /admin - Админ-панель")
     print("  /cancel - Отмена текущего действия")
-    print("\n🔧 Функции админ-панели:")
+    print("\n🔧 Админ-панель:")
     print("  ➕ Добавить товар")
     print("  ❌ Удалить товар")
     print("  ✏️ Изменить товар")
@@ -1053,6 +1069,7 @@ if __name__ == "__main__":
     print("  📋 Последние покупки")
     print("\n📸 При оплате:")
     print("  - Пользователь получает подтверждение")
-    print("  - Администратор получает фото чека")
-    print("\n" + "=" * 50)
+    print("  - ВСЕ администраторы получают фото чека")
+    print("  - Чек приходит от ЛЮБОГО пользователя")
+    print("\n" + "=" * 60)
     bot.infinity_polling()
